@@ -1,0 +1,222 @@
+import React, { useState, useEffect } from "react";
+import "./App.css";
+
+function App() {
+  const [nodes, setNodes] = useState([]); // All nodes from the database
+  const [nextId, setNextId] = useState(1);
+  const [inputValue, setInputValue] = useState("");
+  const [rootNode, setRootNode] = useState(null); // Root node of the tree
+
+  // Fetch nodes from the database
+  const fetchNodes = async () => {
+    try {
+      const response = await fetch("http://localhost:7000/addnode");
+      const data = await response.json();
+      setNodes(data);
+
+      // Debugging: Log fetched data
+      console.log("Fetched nodes from database:", data);
+
+      // Find and set the root node (id = 1)
+      const root = data.find((node) => node.id === 1);
+      if (root) {
+        setRootNode(root);
+        console.log("Root node found:", root);
+      } else {
+        console.warn("No root node (id = 1) found in the database.");
+      }
+    } catch (error) {
+      console.error("Error fetching nodes from database:", error);
+    }
+  };
+
+  useEffect(() => {
+    fetchNodes();
+  }, []);
+
+  // Add node to the tree
+  const addNode = (value) => {
+    const strArray = value.split(",");
+    const newValues = strArray.map((str) => parseInt(str.trim(), 10)).filter((num) => !isNaN(num));
+
+    if (newValues.length === 0) return;
+
+    setNodes((prevNodes) => {
+      const updatedNodes = [...prevNodes];
+      let currentNextId = nextId;
+
+      newValues.forEach(async (intValue) => {
+        const newNode = { id: currentNextId++, value: intValue, left: null, right: null };
+
+        if (!rootNode) {
+          // If no root exists, make this the root
+          newNode.x = 300;
+          newNode.y = 40;
+          updatedNodes.push(newNode);
+          setRootNode(newNode);
+        } else {
+          // Insert node using rootNode as the parent
+          insertNode(updatedNodes, rootNode, newNode, 100, 80);
+        }
+
+        try {
+          // Save the new node to the database
+          await fetch("http://localhost:7000/addnode", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(newNode),
+          });
+          console.log("Node saved to database:", newNode);
+        } catch (error) {
+          console.error("Error saving node to database:", error);
+        }
+      });
+
+      setNextId(currentNextId);
+      return updatedNodes;
+    });
+
+    setInputValue("");
+  };
+
+  // Recursive function to insert a node and update children in the database
+  const insertNode = (nodes, parent, newNode, offsetX, offsetY) => {
+    if (!parent) {
+      console.log("Undefined parent");
+      return;
+    }
+
+    // Debugging: Log parent to ensure it's valid
+    console.log("Parent node: ", parent);
+
+    if (newNode.value < parent.value) {
+      if (parent.left === null) {
+        parent.left = newNode.id;
+        newNode.x = parent.x - offsetX;
+        newNode.y = parent.y + offsetY;
+        nodes.push(newNode);
+        
+        // Update the parent in the database with the new left child
+        updateParentInDatabase(parent);
+
+      } else {
+        const leftChild = nodes.find((n) => n.id === parent.left);
+        insertNode(nodes, leftChild, newNode, offsetX * 0.6, offsetY);
+      }
+    } else {
+      if (parent.right === null) {
+        parent.right = newNode.id;
+        newNode.x = parent.x + offsetX;
+        newNode.y = parent.y + offsetY;
+        nodes.push(newNode);
+        
+        // Update the parent in the database with the new right child
+        updateParentInDatabase(parent);
+      } else {
+        const rightChild = nodes.find((n) => n.id === parent.right);
+        insertNode(nodes, rightChild, newNode, offsetX * 0.6, offsetY);
+      }
+    }
+  };
+
+  // Function to update the parent in the database with new left or right child
+  const updateParentInDatabase = async (parent) => {
+    try {
+      const updatedParent = {
+        id: parent.id,
+        left: parent.left,
+        right: parent.right,
+      };
+
+      const response = await fetch(`http://localhost:7000/addnode/${parent.id}`, {
+        method: "PATCH", // Update the parent node
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updatedParent),
+      });
+
+      if (response.ok) {
+        console.log("Parent node updated in the database:", updatedParent);
+      } else {
+        console.error("Failed to update parent node in the database.");
+      }
+    } catch (error) {
+      console.error("Error updating parent node in database:", error);
+    }
+  };
+
+  // Render the tree recursively using SVG
+  const renderTree = (nodeId) => {
+    const node = nodes.find((n) => n.id === nodeId);
+    if (!node || node.x === undefined || node.y === undefined) return null;
+    const leftChild = nodes.find((n) => n.id === node.left);
+    const rightChild = nodes.find((n) => n.id === node.right);
+
+    return (
+      <>
+        <circle cx={node.x} cy={node.y} r="20" className="node" />
+        <text x={node.x} y={node.y} dy="5" textAnchor="middle" fill="black">
+          {node.value}
+        </text>
+
+        {leftChild && leftChild.x !== undefined && leftChild.y !== undefined && (
+          <>
+            <line
+              x1={node.x}
+              y1={node.y + 20}
+              x2={leftChild.x}
+              y2={leftChild.y - 10}
+              className="link"
+            />
+            {renderTree(node.left)}
+          </>
+        )}
+
+        {rightChild && rightChild.x !== undefined && rightChild.y !== undefined && (
+          <>
+            <line
+              x1={node.x}
+              y1={node.y + 20}
+              x2={rightChild.x}
+              y2={rightChild.y - 20}
+              className="link"
+            />
+            {renderTree(node.right)}
+          </>
+        )}
+      </>
+    );
+  };
+
+  return (
+    <div className="App">
+      <h1>Binary Search Tree Visualization</h1>
+
+      {/* Input and Button Section */}
+      <div className="input-container">
+        <input
+          type="text"
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          placeholder="Enter a number"
+          style={{ padding: "8px", fontSize: "16px", width: "200px", marginRight: "8px" }}
+        />
+        <button
+          onClick={() => addNode(inputValue)}
+          disabled={!inputValue}
+          style={{ padding: "8px 12px", fontSize: "16px" }}
+        >
+          Add Node
+        </button>
+      </div>
+
+      {/* Tree Visualization */}
+      <div className="tree-container">
+        <svg width="1500" height="800">
+          {nodes.length > 0 && renderTree(1)}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+export default App;
